@@ -1,0 +1,312 @@
+---
+title: "Prelim Analyses"
+author: 'Analyses: Amanda D. Perez-Ceballos'
+date: "May 12, 2017"
+output: html_document
+---
+
+```{r setup, echo = F, warning = F, message = F}
+#Read in libraries.
+if(!"psych" %in% installed.packages()) install.packages("psych")
+library(psych)
+if(!"tidyverse" %in% installed.packages()) install.packages("tidyverse")
+library(tidyverse)
+if(!"dplyr" %in% installed.packages()) install.packages("dplyr")
+library(dplyr)
+if(!"lubridate" %in% installed.packages()) install.packages("lubridate")
+library(lubridate)
+if(!"gvlma" %in% installed.packages()) install.packages("gvlma")
+library(gvlma)
+if(!"ggplot2" %in% installed.packages()) install.packages("ggplot2")
+library(ggplot2)
+
+```
+
+## Cleaning Data and Creating More Variables
+```{r cleaning, message = FALSE, warning = FALSE, eval = F}
+#No Need to Run This Chunk Again
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace/Complete Lead Dataset")
+
+publicwatersystem <- read.csv("countylist.csv")
+
+publicwaterviolation <- read.csv("violationlist.csv")
+
+publicwaterviolation <- subset(publicwaterviolation, publicwaterviolation$Type == "Violations Present")
+
+#See how many duplicate hash
+dupes.lead <- duplicated(publicwaterviolation$HASH) #3,358 duplicate hashes
+
+publicwaterviolation <- publicwaterviolation[!dupes.lead,] #Getting rid of duplicate hashes
+
+summary(dupes.totalviol <- duplicated(publicwaterviolation$HASH)) #Making sure duplicated hashes are gone (it keeps the first instance)
+
+setwd("C:/Users/amand/Dropbox/Lead GDrive")
+
+populationestimates <- read.csv("ACS_10_5YR_B01003_with_ann.csv")
+
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace")
+
+implicit <- read.csv("2002-2015 FIPS agg race bias all samp groups.csv")
+
+censusdata <- read.csv("2010 population estimates.csv")
+
+census <- merge(censusdata, populationestimates, by = "FIPS")
+
+census$prop_black <- census$BlackPop/census$total_population
+
+census$prop_white <- census$WhitePop/census$total_population
+
+# Make sure your numbers line up after merger. Check incongruencies
+totalviol <- merge(publicwaterviolation, publicwatersystem, by = "PWSID")
+
+#create df of every PWSID-FIPS pair
+pairs <- (totalviol %>%
+            group_by(PWSID, FIPS.Code) %>%
+            dplyr::summarise(n=n()))
+
+length(unique(pairs$PWSID)) # of PWSIDs linked to at least one county, 45813
+length(unique(pairs$FIPS.Code)) # of counties that are linked to at least 1 PWSID, 2850
+
+#how many PWSIDs within each FIPS?
+PWSIDwithinFIPS <- pairs %>%
+  group_by(FIPS.Code) %>%
+  dplyr::summarise(n =n()) # n here represents num of PWSIDs within FIPS
+mean(PWSIDwithinFIPS$n) #on average, each fips has 16 water systems
+range(PWSIDwithinFIPS$n) #But, ranges from 1 to 568 PWSIDs within 1 FIPS
+
+#how many FIPs within each PWSID?
+FIPswithinPWSID <- pairs %>%
+  group_by(PWSID) %>%
+  dplyr::summarise(n =n()) # n here represnts num of FIPS within PWSID. On average, 1, but ranges up to 10. 
+mean(FIPswithinPWSID$n) #On average, each PWSID only serves one FIPS
+range(FIPswithinPWSID$n) #But, it ranges up to 10. 
+
+
+#converting dates to R date objects (in order to subtract dates)
+totalviol$COMPL_PER_BEGIN_DATE <- dmy(totalviol$COMPL_PER_BEGIN_DATE)
+totalviol$COMPL_PER_END_DATE <- dmy(totalviol$COMPL_PER_END_DATE) #111085 don't have end dates
+totalviol$COMPL_respTime <- totalviol$COMPL_PER_END_DATE  - totalviol$COMPL_PER_BEGIN_DATE 
+
+#length(totalviol$COMPL_respTime) #Making sure the following lines are all the same length
+#length(totalviol$COMPL_PER_END_DATE)
+#length(totalviol$COMPL_respTime)
+
+
+#There is a link between IS_MAJOR_VIOL_IND & IS_HEALTH_BASED_IND. When IS_HEALTH_BASED_IND
+# is "Y", IS_MAJOR_VIOL_IND is missing. When IS_HEALTH_BASED_IND. = "N", IS_MAJOR_VIOL_IND varies.
+table(totalviol$IS_MAJOR_VIOL_IND == "Y" & totalviol$IS_HEALTH_BASED_IND == "Y" )
+#Therefore, we will only look at cases where there is a major health violation
+
+
+#Selecting only cases that are a major health violation
+healths <- totalviol %>%
+  filter(IS_HEALTH_BASED_IND == "Y") %>%
+  group_by(PWSID) %>%  #one row for every PWSID
+  dplyr::summarise(meanRespTime = mean(COMPL_respTime, na.rm = T),  #create summary vars for each PWSID
+            meanPopServed = mean(POPULATION_SERVED_COUNT, na.rm = T),
+            n = n(), #total of health based violations
+            FIPS.Code = mean(FIPS.Code, na.rm = T))
+
+
+
+#sum the codes and check
+table(duplicated(publicwatersystem$PWSID))
+table(duplicated(publicwaterviolation$PWSID))
+
+
+#Will create df of every PWSID-FIPS pair again, with the dataset only looking at health violations
+pairs2 <- (healths %>%
+            group_by(PWSID, FIPS.Code) %>%
+            dplyr::summarise(n=n()))
+
+length(unique(pairs2$PWSID)) # of PWSIDs linked to at least one county, 22240
+length(unique(pairs$FIPS.Code)) # of counties that are linked to at least 1 PWSID, 2850
+
+#how many PWSIDs within each FIPS?
+PWSIDwithinFIPS2 <- pairs2 %>%
+  group_by(FIPS.Code) %>%
+  dplyr::summarise(n =n()) # n here represents num of PWSIDs within FIPS
+mean(PWSIDwithinFIPS2$n) #on average, each fips has 8 water systems
+range(PWSIDwithinFIPS2$n) #But, ranges from 1 to 138 PWSIDs within 1 FIPS
+
+#how many FIPs within each PWSID?
+FIPswithinPWSID2 <- pairs2 %>%
+  group_by(PWSID) %>%
+  dplyr::summarise(n =n()) # n here represnts num of FIPS within PWSID. On average, 1, but ranges up to 10. 
+mean(FIPswithinPWSID2$n) #On average, each PWSID only serves one FIPS
+range(FIPswithinPWSID2$n) #Range is 1 to 1, meaning each PWSID only serves one FIPS 
+
+
+
+#Merging health violations with PI data
+implicitHealth <- merge(implicit, healths, by.x = "FIPS", by.y = "FIPS.Code")
+
+#class(implicitHealth$FIPS) #make sure FIPS is numeric
+
+#implicitHealth$FIPS <- as.numeric(implicitHealth$FIPS)
+
+class(implicitHealth$meanRespTime) #need to be numeric
+
+#change meanRespTime to numeric  
+implicitHealth$meanRespTime <- as.numeric(implicitHealth$meanRespTime)
+
+#drop PWSIDs where mean pop served is zero (super rural places)
+implicitHealth <- implicitHealth %>%
+  filter(meanPopServed > 0)
+
+implicitHealth <- merge(implicitHealth, census, by = "FIPS")
+
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace")
+write.csv(implicitHealth, "implicitHealth.csv")# We only needed to create/write this once. From now on, we can just read in the CSV in the below line.
+
+
+```
+
+
+```{r creating DVs, echo = F, warning = F, message = F, eval = F}
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace")
+
+implicitHealth <- read.csv("implicitHealth.csv")
+
+#Variables of interest:
+#1. meanRespTime
+#2. PUBLIC_NOTIFICATION_TIER: Numeric code for Public Notification Tier for the violation. 1	Immediate Notice, Within 24 Hours | 2	Notice as Soon as Practical, | 3	Annual Notice
+#3. VIOLATION_CATEGORY_CODE
+
+#Selecting only cases that are a major health violation
+healthvio <- subset(totalviol, IS_HEALTH_BASED_IND == "Y")
+
+
+table(healthvio$PUBLIC_NOTIFICATION_TIER) #will create 2, since there are only tier 1 & tier 2
+table(healthvio$VIOLATION_CATEGORY_CODE) #Only have MCL, MRDL, and TT in our sample
+summary(implicitHealth$meanRespTime) #Why do we have negative values? Will aggregate by mean later on when creating county level dataset. For water system level, it is fine as it currently is. 
+
+
+#Next step is to create county level data for LMs.
+fipstier.1 <- healthvio %>% 
+  filter(PUBLIC_NOTIFICATION_TIER == 1 ) %>% 
+   group_by(FIPS.Code) %>%
+  dplyr::summarise( tier1_sum = sum(PUBLIC_NOTIFICATION_TIER) )
+
+fipstier.2 <- healthvio %>% 
+  filter(PUBLIC_NOTIFICATION_TIER == 2 ) %>% 
+   group_by(FIPS.Code) %>%
+  dplyr::summarise( tier2_sum = sum(PUBLIC_NOTIFICATION_TIER) )
+
+
+fipsMCL <- healthvio %>% 
+  filter(VIOLATION_CATEGORY_CODE == "MCL" ) %>% 
+   group_by(FIPS.Code) %>%
+  dplyr::summarise( MCL_sum = n() )
+
+fipsMRDL <- healthvio %>% 
+  filter(VIOLATION_CATEGORY_CODE == "MRDL" ) %>% 
+   group_by(FIPS.Code) %>%
+  dplyr::summarise( MRDL_sum = n() )
+
+fipsTT <- healthvio %>% 
+  filter(VIOLATION_CATEGORY_CODE == "TT" ) %>% 
+   group_by(FIPS.Code) %>%
+  dplyr::summarise( TT_sum = n() )
+
+fipstiers <- fipstier.1 %>%
+  merge(fipstier.2, by = "FIPS.Code", all = TRUE) 
+
+fipsvios <- fipsMCL %>%
+  merge(fipsMRDL, by = "FIPS.Code", all = TRUE) %>%
+  merge(fipsTT, by = "FIPS.Code", all = TRUE)
+
+fipspopulation_served_sum <- healthvio %>%
+  group_by(FIPS.Code) %>%
+   dplyr::summarise(popserved_sum = sum(POPULATION_SERVED_COUNT))
+
+fips_level <- fipspopulation_served_sum %>%
+  merge(fipsvios, by = "FIPS.Code", all = TRUE) %>%
+  merge(fipstiers, by = "FIPS.Code", all = TRUE)
+
+#drop PWSIDs where mean pop served is zero (super rural places)
+fips_level <- fips_level %>%
+  filter(popserved_sum > 0)
+
+
+objects(implicitHealth)
+
+meanresponse <- implicitHealth %>% 
+   group_by(FIPS) %>%
+  dplyr::summarise( meanRespTime = mean(meanRespTime) )
+
+fipsdata <- implicit %>%
+  merge(census, by = "FIPS", all.x = T) %>%
+  merge(meanresponse, by = "FIPS", all.x = T) %>%
+  merge(fips_level, by.x = "FIPS", by.y = "FIPS.Code") 
+  
+
+
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace")
+write.csv(fipsdata, "countylevel_LM_data.csv")
+       
+
+cor.test( ~ tier1_sum + rBias_ALLps_D_WhiteGood_AGw,
+          data = fipsdata)
+cor.test( ~ tier2_sum + rBias_ALLps_D_WhiteGood_AGw,
+          data = fipsdata)
+
+
+summary(mod.1 <- lm(tier1_sum ~ rBias_ALLps_D_WhiteGood_AGw, data = finaldata))
+
+
+```
+
+
+
+```{r prelim models, echo = F, warning = F, message = F}
+#havent ran this yet implicitHealth <- filter(implicitHealth, nFIPSrBiasWht_NoAGw > 100) #limiting to counties with at least 100 responses
+
+setwd("C:/Users/amand/Dropbox/Lead GDrive/Shared R Workspace")
+lmdata <- read.csv("countylevel_LM_data.csv")
+
+objects(lmdata)
+lm.1 <- lm(meanRespTime ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.1)
+
+lm.2 <- lm(tier2_sum ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw*prop_black, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.2)
+
+lm.3 <- lm(tier1_sum ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw*prop_black, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.3)
+
+lm.4 <- lm(TT_sum ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw*prop_black, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.4)
+
+lm.5 <- lm(MCL_sum ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw*prop_black, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.5)
+
+lm.6 <- lm(MRDL_sum ~ prop_black + popserved_sum + prop_white +
+             rBiasWhNoH_D_WhiteGood_noAGw*prop_black + rBiasWhNoH_Exp_NoAGw*prop_black, weights = nFIPSrBias_ALL_NoAGw, data = lmdata)
+summary(lm.6)
+
+mod.1<- lmer((meanRespTime) ~  (1|FIPS), weights = nFIPSrBias_ALL_NoAGw, data = implicitHealth)
+summary(mod.1) #right direction, but not significant when weighting by # of PI responses
+
+plot(mod.1)
+
+qqnorm(resid(mod.1))
+#Heavy tails, not normally distributed: data has more extreme values than would be expected if they truly came from a Normal distribution. https://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+#log transform DV, because meanRespTime was skewed
+mod.2<- lmer(log(meanRespTime) ~  (1|FIPS), weights = nFIPSrBias_ALL_NoAGw,  data = implicitHealth)
+summary(mod.2) #more biased counties ~ longer response time, right direction but not significant
+plot(mod.2)
+qqnorm(resid(mod.2)) #Log transforming helped normalize the residuals. 
+
+cor.test( ~ meanPopServed + nFIPSrBias_ALL_NoAGw,
+          data = implicitHealth) #Significant but small correlation
+```
+
+
+
